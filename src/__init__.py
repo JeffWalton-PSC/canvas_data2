@@ -18,7 +18,7 @@ from powercampus import select
 START_ACADEMIC_YEAR = '2004'
 timezone = pytz.timezone('US/Eastern')
 
-app_path = WindowsPath(r"Z:\Applications\Canvas\data2")
+app_path = WindowsPath(r"F:\Applications\Canvas\data2")
 downloads_path = app_path / "downloads"
 schemas_path = app_path / "schemas"
 log_path = app_path / "logs"
