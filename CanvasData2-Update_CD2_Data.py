@@ -22,7 +22,6 @@ app_path = WindowsPath(r"F:\Applications\Canvas\data2")
 downloads_path = app_path / "downloads"
 schemas_path = app_path / "schemas"
 log_path = app_path / "logs"
-data_path = app_path / "data"
    
 logger.remove()
 logger.add(sys.stdout, level="WARNING")
