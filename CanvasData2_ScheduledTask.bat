@@ -16,8 +16,8 @@ echo "call activate" 1>> F:\Applications\Canvas\data2\logs\out.log 2>&1
 rem call conda list 1>> F:\Applications\Canvas\data2\logs\out.log 2>&1
 
 echo "python -m src " >> F:\Applications\Canvas\data2\logs\out.log
-rem C:\ProgramData\Anaconda3\envs\py312cd2\python.exe -m src 1>> F:\Applications\Canvas\data2\logs\out.log 2>&1
-C:\ProgramData\Anaconda3\envs\py312cd2\python.exe -m src 1>> F:\Applications\Canvas\data2\logs\out.log 2>&1
+rem C:\ProgramData\Anaconda3\envs\py312cd2\python.exe CanvasData2-Update_CD2_Data.py 1>> F:\Applications\Canvas\data2\logs\out.log 2>&1
+C:\ProgramData\Anaconda3\envs\py312cd2\python.exe CanvasData2-Update_CD2_Data.py 1>> F:\Applications\Canvas\data2\logs\out.log 2>&1
 
 rem pause
 time /T >> F:\Applications\Canvas\data2\logs\out.log
