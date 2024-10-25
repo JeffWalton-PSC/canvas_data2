@@ -14,7 +14,7 @@ from dap.dap_types import Credentials, Format, IncrementalQuery, SnapshotQuery
 
 from powercampus import select
 
-
+print("start")
 START_ACADEMIC_YEAR = '2004'
 timezone = pytz.timezone('US/Eastern')
 
@@ -24,13 +24,14 @@ schemas_path = app_path / "schemas"
 log_path = app_path / "logs"
    
 logger.remove()
-logger.add(sys.stdout, level="WARNING")
-logger.add(sys.stderr, level="WARNING")
+LOGGING_LEVEL = "DEBUG"
+logger.add(sys.stdout, level=LOGGING_LEVEL)
+logger.add(sys.stderr, level=LOGGING_LEVEL)
 logger.add(
     log_path / "canvas_data2.log",
     rotation="monthly",
     format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {name} | {message}",
-    level="DEBUG",
+    level=LOGGING_LEVEL,
 )
 
 base_url: str = os.environ["DAP_API_URL"]
@@ -43,7 +44,8 @@ client_secret: str = os.environ["DAP_CLIENT_SECRET"]
 credentials = Credentials.create(client_id=client_id, client_secret=client_secret)
 logger.info(credentials)
 
-tables = ["accounts", "users", "pseudonyms", "roles", "enrollment_terms", "enrollment_states", "enrollments", "courses", "course_sections", ]
+# tables = ["accounts", "users", "pseudonyms", "roles", "enrollment_terms", "enrollment_states", "enrollments", "courses", "course_sections", ]
+tables = ["pseudonyms"]
 
 
 def current_yearterm_df() -> pd.DataFrame:
@@ -213,9 +215,10 @@ async def update_cd2_data():
                                 )
                 logger.debug(f"df['{t}']: {df.shape}")
         
-                incr_fn = downloads_path / (f"{year}{term}_incr_{t}.csv")
                 with open(last_seen_fn, 'rb') as file:
                     last_seen = pickle.load(file)
+                    logger.debug(f"{last_seen=}")
+
                 async with DAPClient() as session:
                     query = IncrementalQuery(
                         format=Format.CSV,
@@ -226,35 +229,40 @@ async def update_cd2_data():
                     result = await session.download_table_data(
                         "canvas", t, query, downloads_path, decompress=True
                     )
-                    logger.info("move_file", WindowsPath(result.downloaded_files[0]), WindowsPath(incr_fn))
-                    move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(incr_fn))
-                    WindowsPath(result.downloaded_files[0]).parent.rmdir()
+                    if result:
+                        incr_fn = downloads_path / (f"{year}{term}_incr_{t}.csv")
+                        if incr_fn.exists():
+                            incr_fn.unlink()
+                        logger.info(f"move incremental file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(incr_fn)}")
+                        move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(incr_fn))
+                        WindowsPath(result.downloaded_files[0]).parent.rmdir()
         
-                col_names.append('meta.action')
-                col_dtypes['meta.action'] = 'string'
+                        col_names.append('meta.action')
+                        col_dtypes['meta.action'] = 'string'
+                
+                        inc_df = pd.read_csv(incr_fn, 
+                                        header=0,
+                                        # names=col_names, 
+                                        dtype=col_dtypes, 
+                                        parse_dates=col_datetimes,
+                                        na_values=[r'\N']
+                                        )
+                        logger.debug(f"inc_df['{t}']={inc_df.shape}, {incr_fn=}")
         
-                inc_df = pd.read_csv(incr_fn, 
-                                header=0,
-                                # names=col_names, 
-                                dtype=col_dtypes, 
-                                parse_dates=col_datetimes,
-                                na_values=[r'\N']
+                        out_fn = downloads_path / (f"{year}{term}_{t}.csv")
+                        df_out = pd.concat([
+                            df, inc_df
+                        ]
+                        )
+                        logger.debug(f"before sort/drop: df_out['{t}']={df_out.shape}")
+                        df_out = (df_out.sort_values(['key.id', 'meta.action', 'meta.ts'])
+                                        .drop_duplicates(subset=['key.id'],keep='last')
                                 )
-                logger.debug(f"inc_df['{t}']: {inc_df.shape}")
-        
-                fn_out = downloads_path / (f"{year}{term}_{t}.csv")
-                df_out = pd.concat([
-                    df, inc_df
-                ]
-                )
-                logger.debug(f"df_out['{t}']: {df_out.shape}")
-                df_out = (df_out.sort_values(['key.id', 'meta.action', 'meta.ts'])
-                                .drop_duplicates(subset=['key.id'],keep='last')
-                         )
-                logger.debug(f"df_out['{t}']: {df_out.shape}")
-                df_out.to_csv(fn_out,
-                              index=False,
-                             )
+                        logger.debug(f"after sort/drop: df_out['{t}']={df_out.shape}")
+                        df_out.to_csv(out_fn,
+                                    index=False,
+                                    )
+                        logger.debug(f"after write: {out_fn=}")
          
             else:
                 # create with Snapshot
@@ -263,13 +271,16 @@ async def update_cd2_data():
                     result = await session.download_table_data(
                         "canvas", t, query, downloads_path, decompress=True
                     )
-                    logger.info("move_file", WindowsPath(result.downloaded_files[0]), WindowsPath(fn))
-                    move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(fn))
-                    WindowsPath(result.downloaded_files[0]).parent.rmdir()
+                    if result:
+                        logger.info(f"move snapshot file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(fn)}")
+                        move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(fn))
+                        WindowsPath(result.downloaded_files[0]).parent.rmdir()
 
             with open(last_seen_fn, 'wb') as file:
                 pickle.dump(now, file )
 
 
 if __name__ == "__main__":
-    update_cd2_data()
+    asyncio.run(update_cd2_data())
+
+print("end")
