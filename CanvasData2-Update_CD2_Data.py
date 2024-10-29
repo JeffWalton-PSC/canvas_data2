@@ -220,21 +220,25 @@ async def incremental_update(base_fn, incr_fn, file_type):
                         parse_dates=col_datetimes,
                         na_values=[r'\N']
                         )
-    logger.debug(f"inc_df['{file_type}']: {inc_df.shape}")
-   
-    df_out = pd.concat([
-        base_df, inc_df
-    ]
-    )
-    logger.debug(f"df_out['{file_type}']: {df_out.shape}")
-    df_out = (df_out.sort_values(['key.id', 'meta.ts'])
-                    .drop_duplicates(subset=['key.id'],keep='last')
-                )
-    logger.debug(f"df_out['{file_type}']: {df_out.shape}")
-    df_out.to_csv(base_fn,
-                    index=False,
+    if not inc_df.empty:
+        logger.debug(f"inc_df['{file_type}']: {inc_df.shape}")
+        df_out = pd.concat([
+            base_df, inc_df
+        ]
+        )
+        logger.debug(f"df_out['{file_type}']: {df_out.shape}")
+        sort_cols = [c for c in yt_df.columns if 'key' in c]
+        # sort_cols.append('meta.ts')
+        df_out = (df_out.sort_values(sort_cols + ['meta.ts'])
+                        .drop_duplicates(subset=sort_cols, keep='last')
                     )
-    logger.debug(f"{base_fn} updated.")
+        logger.debug(f"df_out['{file_type}']: {df_out.shape}")
+        df_out.to_csv(base_fn,
+                        index=False,
+                        )
+        logger.debug(f"{base_fn} updated.")
+    else:
+        logger.debug(f"no update: inc_df is empty.")
 
 
 async def update_cd2_data():
@@ -259,19 +263,24 @@ async def update_cd2_data():
                 # create with Snapshot
                 async with DAPClient() as session:
                     query = SnapshotQuery(format=Format.CSV, mode=None)
-                    result = await session.download_table_data(
-                        "canvas", t, query, downloads_path, decompress=True
-                    )
-                    if result:
-                        logger.info(f"copy snapshot file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(yt_fn)}")
-                        copy_file(WindowsPath(result.downloaded_files[0]), WindowsPath(yt_fn))
-                        if fn.exists():
-                            fn.unlink()
-                        logger.info(f"move snapshot file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(fn)}")
-                        move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(fn))
-                        WindowsPath(result.downloaded_files[0]).parent.rmdir()
+                    try:
+                        result = await session.download_table_data(
+                            "canvas", t, query, downloads_path, decompress=True
+                        )
+                    except Exception as err:
+                        logger.error(f"{t}: {result=}")
+                        logger.error(err)
                     else:
-                        logger.warning(f"no result from snapshot query: {t=}, {yt_fn=}")
+                        if result:
+                            logger.info(f"copy snapshot file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(yt_fn)}")
+                            copy_file(WindowsPath(result.downloaded_files[0]), WindowsPath(yt_fn))
+                            if fn.exists():
+                                fn.unlink()
+                            logger.info(f"move snapshot file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(fn)}")
+                            move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(fn))
+                            WindowsPath(result.downloaded_files[0]).parent.rmdir()
+                        else:
+                            logger.warning(f"no result from snapshot query: {t=}, {yt_fn=}")
                     # remove incremental file
                     incr_fn = downloads_path / (f"incr_{t}.csv")
                     if incr_fn.exists():
@@ -294,24 +303,26 @@ async def update_cd2_data():
                         since=last_seen,
                         until=None,
                     )
-                    result = await session.download_table_data(
-                        "canvas", t, query, downloads_path, decompress=True
-                    )
-                    logger.info(f"{result=}")
-                    if result:
-                        incr_fn = downloads_path / (f"incr_{t}.csv")
-                        if incr_fn.exists():
-                            incr_fn.unlink()
-                        logger.info(f"move incremental file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(incr_fn)}")
-                        move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(incr_fn))
-                        WindowsPath(result.downloaded_files[0]).parent.rmdir()
-
-                        # update yearterm_type.csv with new increment
-                        await incremental_update(fn, incr_fn, t)
-                        copy_file(fn, yt_fn, True)
-
+                    try:
+                        result = await session.download_table_data(
+                            "canvas", t, query, downloads_path, decompress=True
+                        )
+                    except Exception as err:
+                        logger.error(f"{t}: {result=}")
+                        logger.error(err)
                     else:
-                        logger.warning(f"no result from incremental query: {t=}, {incr_fn=}")
+                        if result:
+                            incr_fn = downloads_path / (f"incr_{t}.csv")
+                            if incr_fn.exists():
+                                incr_fn.unlink()
+                            logger.info(f"move incremental file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(incr_fn)}")
+                            move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(incr_fn))
+                            WindowsPath(result.downloaded_files[0]).parent.rmdir()
+                            # update yearterm_type.csv with new increment
+                            await incremental_update(fn, incr_fn, t)
+                            copy_file(fn, yt_fn, True)
+                        else:
+                            logger.warning(f"no result from incremental query: {t=}, {incr_fn=}")
 
         with open(last_seen_fn, 'wb') as file:
             pickle.dump(now, file )
