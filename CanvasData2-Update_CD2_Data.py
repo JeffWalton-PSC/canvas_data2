@@ -134,7 +134,9 @@ def move_file(source, destination):
         source.unlink()
 
 
-def copy_file(source, destination):
+def copy_file(source, destination, force=False):
+    if force and destination.exists():
+        destination.unlink()
     try:
         with destination.open(mode="xb") as file:
             file.write(source.read_bytes())
@@ -187,6 +189,54 @@ def table_columns(table_schema: dict):
     return col_names, col_dtypes, col_datetimes
 
 
+async def incremental_update(base_fn, incr_fn, file_type):
+    """
+    """
+
+    logger.debug(f"incremental_update({base_fn=},  {incr_fn=}, {file_type=}")
+    async with DAPClient() as session:
+        result = await session.get_table_schema("canvas", file_type)
+        table_schema = result.schema["properties"]["value"]["properties"]
+        col_names, col_dtypes, col_datetimes = table_columns(table_schema)
+        logger.debug(f"{col_names=}")
+        logger.debug(f"{col_dtypes=}")
+        logger.debug(f"{col_datetimes=}")
+
+    base_df = pd.read_csv(base_fn, 
+                        header=0,
+                        # names=col_names, 
+                        dtype=col_dtypes, 
+                        parse_dates=col_datetimes,
+                        na_values=[r'\N']
+                        )
+    logger.debug(f"base_df['{file_type}']: {base_df.shape}")
+
+    col_names.append('meta.action')
+    col_dtypes['meta.action'] = 'string'
+    inc_df = pd.read_csv(incr_fn, 
+                        header=0,
+                        # names=col_names, 
+                        dtype=col_dtypes, 
+                        parse_dates=col_datetimes,
+                        na_values=[r'\N']
+                        )
+    logger.debug(f"inc_df['{file_type}']: {inc_df.shape}")
+   
+    df_out = pd.concat([
+        base_df, inc_df
+    ]
+    )
+    logger.debug(f"df_out['{file_type}']: {df_out.shape}")
+    df_out = (df_out.sort_values(['key.id', 'meta.ts'])
+                    .drop_duplicates(subset=['key.id'],keep='last')
+                )
+    logger.debug(f"df_out['{file_type}']: {df_out.shape}")
+    df_out.to_csv(base_fn,
+                    index=False,
+                    )
+    logger.debug(f"{base_fn} updated.")
+
+
 async def update_cd2_data():
     """
     """
@@ -198,12 +248,13 @@ async def update_cd2_data():
     logger.debug(f"{start_date=}, {end_date=}, {now=}")
     last_seen_fn = downloads_path / 'last_seen.pkl'
     logger.debug(f"{last_seen_fn=}")
+    # only update files during the semester
     if  (now >= start_date) & (now <= end_date):
         for t in tables:
             fn = downloads_path / (f"{t}.csv")
             logger.debug(f"{t}, {fn}")
             yt_fn = downloads_path / (f"{year}{term}_{t}.csv")
-            logger.debug(f"{t}, {yt_fn}")
+            logger.debug(f"{t}, {yt_fn.exists()=}, {yt_fn}")
             if not yt_fn.exists():
                 # create with Snapshot
                 async with DAPClient() as session:
@@ -227,7 +278,7 @@ async def update_cd2_data():
                         incr_fn.unlink()
             else:
                 # Incremental update
-                logger.debug(f"{fn.exists()=}, {file_modified=}")
+                logger.debug(f"{yt_fn.exists()=}, {yt_fn=}")
 
                 if last_seen_fn.exists():
                     with open(last_seen_fn, 'rb') as file:
@@ -246,6 +297,7 @@ async def update_cd2_data():
                     result = await session.download_table_data(
                         "canvas", t, query, downloads_path, decompress=True
                     )
+                    logger.info(f"{result=}")
                     if result:
                         incr_fn = downloads_path / (f"incr_{t}.csv")
                         if incr_fn.exists():
@@ -253,11 +305,16 @@ async def update_cd2_data():
                         logger.info(f"move incremental file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(incr_fn)}")
                         move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(incr_fn))
                         WindowsPath(result.downloaded_files[0]).parent.rmdir()
+
+                        # update yearterm_type.csv with new increment
+                        await incremental_update(fn, incr_fn, t)
+                        copy_file(fn, yt_fn, True)
+
                     else:
                         logger.warning(f"no result from incremental query: {t=}, {incr_fn=}")
 
-            with open(last_seen_fn, 'wb') as file:
-                pickle.dump(now, file )
+        with open(last_seen_fn, 'wb') as file:
+            pickle.dump(now, file )
 
 
 if __name__ == "__main__":
