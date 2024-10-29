@@ -44,8 +44,8 @@ client_secret: str = os.environ["DAP_CLIENT_SECRET"]
 credentials = Credentials.create(client_id=client_id, client_secret=client_secret)
 logger.info(credentials)
 
-# tables = ["accounts", "users", "pseudonyms", "roles", "enrollment_terms", "enrollment_states", "enrollments", "courses", "course_sections", ]
-tables = ["pseudonyms"]
+tables = ["accounts", "users", "pseudonyms", "roles", "enrollment_terms", "enrollment_states", "enrollments", "courses", "course_sections", ]
+# tables = ["pseudonyms"]
 
 
 def current_yearterm_df() -> pd.DataFrame:
@@ -134,6 +134,14 @@ def move_file(source, destination):
         source.unlink()
 
 
+def copy_file(source, destination):
+    try:
+        with destination.open(mode="xb") as file:
+            file.write(source.read_bytes())
+    except FileExistsError:
+        logger.error(f"File {destination} exists already.")
+
+
 def table_columns(table_schema: dict):
     col_names = ['key.id']
     col_dtypes = {'key.id': pd.Int64Dtype()}
@@ -192,32 +200,41 @@ async def update_cd2_data():
     logger.debug(f"{last_seen_fn=}")
     if  (now >= start_date) & (now <= end_date):
         for t in tables:
-            fn = downloads_path / (f"{year}{term}_{t}.csv")
+            fn = downloads_path / (f"{t}.csv")
             logger.debug(f"{t}, {fn}")
-            if fn.exists():
-                # Increment update
-                logger.debug(f"{fn.exists()=}")
-        
+            yt_fn = downloads_path / (f"{year}{term}_{t}.csv")
+            logger.debug(f"{t}, {yt_fn}")
+            if not yt_fn.exists():
+                # create with Snapshot
                 async with DAPClient() as session:
-                    result = await session.get_table_schema("canvas", t)
-                    table_schema = result.schema["properties"]["value"]["properties"]
-                    col_names, col_dtypes, col_datetimes = table_columns(table_schema)
-                    logger.debug(f"{col_names=}")
-                    logger.debug(f"{col_dtypes=}")
-                    logger.debug(f"{col_datetimes=}")
-        
-                df = pd.read_csv(fn, 
-                                header=0,
-                                # names=col_names, 
-                                dtype=col_dtypes, 
-                                parse_dates=col_datetimes,
-                                na_values=[r'\N']
-                                )
-                logger.debug(f"df['{t}']: {df.shape}")
-        
-                with open(last_seen_fn, 'rb') as file:
-                    last_seen = pickle.load(file)
-                    logger.debug(f"{last_seen=}")
+                    query = SnapshotQuery(format=Format.CSV, mode=None)
+                    result = await session.download_table_data(
+                        "canvas", t, query, downloads_path, decompress=True
+                    )
+                    if result:
+                        logger.info(f"copy snapshot file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(yt_fn)}")
+                        copy_file(WindowsPath(result.downloaded_files[0]), WindowsPath(yt_fn))
+                        if fn.exists():
+                            fn.unlink()
+                        logger.info(f"move snapshot file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(fn)}")
+                        move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(fn))
+                        WindowsPath(result.downloaded_files[0]).parent.rmdir()
+                    else:
+                        logger.warning(f"no result from snapshot query: {t=}, {yt_fn=}")
+                    # remove incremental file
+                    incr_fn = downloads_path / (f"incr_{t}.csv")
+                    if incr_fn.exists():
+                        incr_fn.unlink()
+            else:
+                # Incremental update
+                logger.debug(f"{fn.exists()=}, {file_modified=}")
+
+                if last_seen_fn.exists():
+                    with open(last_seen_fn, 'rb') as file:
+                        last_seen = pickle.load(file)
+                        logger.debug(f"{last_seen=}")
+                else:
+                    last_seen = start_date
 
                 async with DAPClient() as session:
                     query = IncrementalQuery(
@@ -230,51 +247,14 @@ async def update_cd2_data():
                         "canvas", t, query, downloads_path, decompress=True
                     )
                     if result:
-                        incr_fn = downloads_path / (f"{year}{term}_incr_{t}.csv")
+                        incr_fn = downloads_path / (f"incr_{t}.csv")
                         if incr_fn.exists():
                             incr_fn.unlink()
                         logger.info(f"move incremental file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(incr_fn)}")
                         move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(incr_fn))
                         WindowsPath(result.downloaded_files[0]).parent.rmdir()
-        
-                        col_names.append('meta.action')
-                        col_dtypes['meta.action'] = 'string'
-                
-                        inc_df = pd.read_csv(incr_fn, 
-                                        header=0,
-                                        # names=col_names, 
-                                        dtype=col_dtypes, 
-                                        parse_dates=col_datetimes,
-                                        na_values=[r'\N']
-                                        )
-                        logger.debug(f"inc_df['{t}']={inc_df.shape}, {incr_fn=}")
-        
-                        out_fn = downloads_path / (f"{year}{term}_{t}.csv")
-                        df_out = pd.concat([
-                            df, inc_df
-                        ]
-                        )
-                        logger.debug(f"before sort/drop: df_out['{t}']={df_out.shape}")
-                        df_out = (df_out.sort_values(['key.id', 'meta.action', 'meta.ts'])
-                                        .drop_duplicates(subset=['key.id'],keep='last')
-                                )
-                        logger.debug(f"after sort/drop: df_out['{t}']={df_out.shape}")
-                        df_out.to_csv(out_fn,
-                                    index=False,
-                                    )
-                        logger.debug(f"after write: {out_fn=}")
-         
-            else:
-                # create with Snapshot
-                async with DAPClient() as session:
-                    query = SnapshotQuery(format=Format.CSV, mode=None)
-                    result = await session.download_table_data(
-                        "canvas", t, query, downloads_path, decompress=True
-                    )
-                    if result:
-                        logger.info(f"move snapshot file: {WindowsPath(result.downloaded_files[0])}, {WindowsPath(fn)}")
-                        move_file(WindowsPath(result.downloaded_files[0]), WindowsPath(fn))
-                        WindowsPath(result.downloaded_files[0]).parent.rmdir()
+                    else:
+                        logger.warning(f"no result from incremental query: {t=}, {incr_fn=}")
 
             with open(last_seen_fn, 'wb') as file:
                 pickle.dump(now, file )
