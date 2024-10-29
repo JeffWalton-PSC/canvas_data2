@@ -44,8 +44,9 @@ client_secret: str = os.environ["DAP_CLIENT_SECRET"]
 credentials = Credentials.create(client_id=client_id, client_secret=client_secret)
 logger.info(credentials)
 
-tables = ["accounts", "users", "pseudonyms", "roles", "enrollment_terms", "enrollment_states", "enrollments", "courses", "course_sections", ]
+# tables = ["accounts", "users", "pseudonyms", "roles", "enrollment_terms", "enrollment_states", "enrollments", "courses", "course_sections", ]
 # tables = ["pseudonyms"]
+tables = ["accounts", "users", "pseudonyms", "roles", "enrollment_terms", "enrollment_states", "enrollments", "course_sections", ]
 
 
 def current_yearterm_df() -> pd.DataFrame:
@@ -152,7 +153,7 @@ def table_columns(table_schema: dict):
         column_name = 'value.' + column
         col_names.append(column_name)
         column_def = table_schema[column]
-        # logger.debug(f"{column=}, {column_name=}, {column_def=}")
+        logger.debug(f"{column=}, {column_name=}, {column_def=}")
         if 'type' in column_def:
             column_type = column_def['type']
         # logger.debug(f"{column=} is {column_type=}")
@@ -173,7 +174,7 @@ def table_columns(table_schema: dict):
                 col_dtypes[column_name] = pd.Int64Dtype()
                 # logger.debug(f"\t{column=} {col_dtypes[column]=}")
             else:
-                col_dtypes[column_name] = 'integer'
+                col_dtypes[column_name] = pd.Int64Dtype()
         elif column_type == 'boolean':
             col_dtypes[column_name] = 'boolean'
         elif column_type == 'object':
@@ -207,7 +208,9 @@ async def incremental_update(base_fn, incr_fn, file_type):
                         # names=col_names, 
                         dtype=col_dtypes, 
                         parse_dates=col_datetimes,
-                        na_values=[r'\N']
+                        true_values=["Yes", "True", "TRUE"], 
+                        false_values=["No", "False", "FALSE"],
+                        na_values=[r'\N'],
                         )
     logger.debug(f"base_df['{file_type}']: {base_df.shape}")
 
@@ -218,7 +221,9 @@ async def incremental_update(base_fn, incr_fn, file_type):
                         # names=col_names, 
                         dtype=col_dtypes, 
                         parse_dates=col_datetimes,
-                        na_values=[r'\N']
+                        true_values=["Yes", "True", "TRUE"], 
+                        false_values=["No", "False", "FALSE"],
+                        na_values=[r'\N'],
                         )
     if not inc_df.empty:
         logger.debug(f"inc_df['{file_type}']: {inc_df.shape}")
