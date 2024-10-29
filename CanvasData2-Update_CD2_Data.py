@@ -227,7 +227,7 @@ async def incremental_update(base_fn, incr_fn, file_type):
         ]
         )
         logger.debug(f"df_out['{file_type}']: {df_out.shape}")
-        sort_cols = [c for c in yt_df.columns if 'key' in c]
+        sort_cols = [c for c in df_out.columns if 'key' in c]
         # sort_cols.append('meta.ts')
         df_out = (df_out.sort_values(sort_cols + ['meta.ts'])
                         .drop_duplicates(subset=sort_cols, keep='last')
