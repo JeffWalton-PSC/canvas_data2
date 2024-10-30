@@ -24,14 +24,14 @@ schemas_path = app_path / "schemas"
 log_path = app_path / "logs"
    
 logger.remove()
-LOGGING_LEVEL = "DEBUG"
+LOGGING_LEVEL = "WARNING"
 logger.add(sys.stdout, level=LOGGING_LEVEL)
 logger.add(sys.stderr, level=LOGGING_LEVEL)
 logger.add(
     log_path / "canvas_data2.log",
     rotation="monthly",
     format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {name} | {message}",
-    level=LOGGING_LEVEL,
+    level="DEBUG",
 )
 
 base_url: str = os.environ["DAP_API_URL"]
